@@ -162,18 +162,32 @@ adb shell pm install -r /data/local/tmp/fdroid.apk
 
 # Сканер QR/штрих/2D-кодов — Binary Eye (открытый, поддерживает
 # QR, Data Matrix, Aztec, PDF417, EAN, UPC, Code 39/93/128 и др.)
-curl -L -o binaryeye.apk "https://f-droid.org/repo/de.markusfisch.android.binaryeye_144.apk"
+# Проверено: версия 1.75.4 (_179.apk)
+curl -L -o binaryeye.apk "https://f-droid.org/repo/de.markusfisch.android.binaryeye_179.apk"
 adb push binaryeye.apk /data/local/tmp/binaryeye.apk
 adb shell pm install -r /data/local/tmp/binaryeye.apk
 ```
 
-> Номер версии в имени файла (`_144.apk`) со временем меняется — актуальную ссылку смотрите на странице пакета: https://f-droid.org/packages/de.markusfisch.android.binaryeye/
+> Номер версии в имени файла (`_179.apk`) со временем меняется — актуальную ссылку смотрите на странице пакета: https://f-droid.org/packages/de.markusfisch.android.binaryeye/
+
+> После первого запуска Binary Eye запросит выбор режима («Простой» / «Расширенный») и доступ к камере — разрешите на экране. Для проверки установленного: `adb shell pm list packages | grep -E "fdroid|binaryeye|kiss"`
 
 Проверка:
 
 ```bash
 adb shell pm list packages | grep -E "fdroid|binaryeye|kiss"
+# package:de.markusfisch.android.binaryeye
+# package:org.fdroid.fdroid
+# package:fr.neamar.kiss
 ```
+
+Проверенные на устройстве версии:
+
+| Пакет | Версия |
+|---|---|
+| fr.neamar.kiss (KISS Launcher) | 3.26.0 |
+| org.fdroid.fdroid (F-Droid) | 1.23.2 |
+| de.markusfisch.android.binaryeye (Binary Eye) | 1.75.4 |
 
 ## Проблемы и решения (FAQ)
 
