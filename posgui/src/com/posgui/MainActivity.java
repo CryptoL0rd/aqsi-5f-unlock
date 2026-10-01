@@ -7,6 +7,7 @@ import android.os.Looper;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.lang.reflect.Method;
@@ -19,6 +20,7 @@ import java.lang.reflect.Method;
 public class MainActivity extends Activity {
 
     private TextView logView;
+    private ScrollView logScroll;
     private Handler ui = new Handler(Looper.getMainLooper());
 
     // PosApiHelper reflection handles
@@ -33,6 +35,7 @@ public class MainActivity extends Activity {
         setContentView(R.layout.activity_main);
 
         logView = findViewById(R.id.log);
+        logScroll = findViewById(R.id.logScroll);
         findViewById(R.id.btnClear).setOnClickListener(v -> logView.setText(""));
 
         initHelper();
@@ -85,10 +88,8 @@ public class MainActivity extends Activity {
     private void log(String s) {
         ui.post(() -> {
             logView.append(s + "\n");
-            // auto-scroll
-            final int scroll = logView.getLayout() == null ? 0 :
-                    logView.getLayout().getLineTop(logView.getLineCount()) - logView.getHeight();
-            if (scroll > 0) logView.scrollTo(0, scroll);
+            // scroll the ScrollView to bottom after layout
+            logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
         });
     }
 
@@ -330,9 +331,34 @@ public class MainActivity extends Activity {
     }
 
     private void testEmvDetect() {
-        log("\n=== EMV detect ===");
-        int r = call0("EntryPoint_Detect");
-        log("EntryPoint_Detect rc=" + r + " (0=MSR 1=ICC 2=NFC)");
+        log("\n=== EMV detect (20s) ===");
+        int r = call0("EntryPoint_Open");
+        log("EntryPoint_Open rc=" + r);
+        log("Present card to any reader...");
+
+        long deadline = System.currentTimeMillis() + 20000;
+        int cardType = -1;
+        while (System.currentTimeMillis() < deadline) {
+            cardType = call0("EntryPoint_Detect");
+            if (cardType >= 0 && cardType != 8) break;   // real card detected
+            if (cardType == 8) { sleep(300); continue; }  // no card yet
+            sleep(300);
+        }
+        call0("EntryPoint_Close");
+
+        log("EntryPoint_Detect rc=" + cardType + " -> " + decodeCardType(cardType));
+    }
+
+    private String decodeCardType(int t) {
+        switch (t) {
+            case 0: return "MSR (magnetic stripe)";
+            case 1: return "ICC (contact chip)";
+            case 2: return "NFC contactless (Paypass/MC)";
+            case 3: return "NFC contactless (payWave/UnionPay)";
+            case 8: return "no card";
+            case -1: return "timeout / cancelled";
+            default: return "unknown";
+        }
     }
 
     private void testAll() {
