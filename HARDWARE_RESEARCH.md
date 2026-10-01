@@ -12,9 +12,9 @@
 
 | # | Модуль | Статус | Точка доступа | Детали |
 |---|--------|--------|----------------|--------|
-| 1 | Чековый термопринтер (MAXQ3255) | ✅ работает | `/dev/ttyMT1` UART 921600, сервис `MaxMcuservice` | Прошивка `MAXQ3255X_App.bin`, шрифты с кириллицей |
-| 2 | 1D-сканер штрих-кодов (Honeywell) | ✅ работает | binder `scannerservice` (`IScannerService`) | JNI `libscanner1d_jni.so`, драйвер `com.hsm.barcode` |
-| 3 | Кардридер: чип + магнитная полоса + NFC | ✅ работает (все 3 интерфейса подтверждены чтением карт) | `libPosApi.so` (Ciontek CS10-PCD) → vpos.apipackage | SN `1002568497007021`; NFC: UID/ATQ; ICC: ATR; MSR: треки 1/2 |
+| 1 | Чековый термопринтер (MAXQ3255) | ⚠️ частично | `/dev/ttyMT1` UART 921600, сервис `MaxMcuservice` | Инициализация/буфер OK, но PrnStart → rc=-3 (low voltage на головке) |
+| 2 | 1D-сканер штрих-кодов (Honeywell) | ⚠️ через binder | binder `scannerservice` (`IScannerService`) | `libPosApi.Lib_ScanOpen` → rc=-1002; использовать binder API |
+| 3 | Кардридер: чип + магнитная полоса + NFC | ✅ работает (все 3 интерфейса подтверждены чтением карт) | `libPosApi.so` (Ciontek CS10-PCD) → vpos.apipackage | SN `1002568497007021`; NFC: UID/ATQ + EMV FCI с AID UnionPay; ICC: ATR PBOC3; MSR: треки 1/2 |
 | 4 | Камера (QR/2D-сканер) | ✅ работает | `media.camera` (`ICameraService`) | Binary Eye установлен |
 | 5 | USB-хост | ✅ работает | `usb` сервис | ttyGS0-7 (gadget), mtp_usb |
 | 6 | Serial (MTK UART) | ✅ работает | ttyMT0-3 | ttyMT1 занят принтером |
@@ -339,3 +339,21 @@ MsrTest v3:   ret=3  TRACK1: B4276380105400142^STOYANOV/IVAN^220820112830...
 - Вторая карта (PBOC3) по чипу: `ATR=3B 67 00 00 86 88 50 42 4F 43 33` (ASCII "PBOC3" в исторических байтах).
 
 **Проверка логов PassSDKDemo вживую** (logcat tag `liuhao`): подтвердил те же вызовы и значения, что в декомпиляте.
+### 2026-10-01 (утро) — PosTestSuite: консольный клон PassSDKDemo, полный прогон
+
+Написан и отлажен **PosTestSuite** — консольный аналог PassSDKDemo (`test.apidemo.activity`), покрывающий все 9 разделов: SYS, ICC, PICC/NFC, MSR, PRINT, SCAN, PCI, EMV-detect, MISC. Подробности и полный лог — в [PASSDKCLONE.md](PASSDKCLONE.md).
+
+- Исходники: `/c/Users/admin/ZCodeProject/postest/src/` (JNI-обёртки `vpos.apipackage.*` + `com.postest.PosTestSuite`).
+- Запуск: `LD_LIBRARY_PATH=/data/app/test.apidemo.activity-1/lib/arm:/system/lib dalvikvm32 -cp /data/local/tmp/postest_dex.jar com.postest.PosTestSuite [suite...]`.
+
+**Новые результаты (карты в чип-слоте и на NFC):**
+- **NFC/EMV**: SELECT PPSE по `PiccCommand` → **SW=9000, полный FCI с AID `A0000006581010` (UnionPay)**. Карта — полноценная EMV. UID=`D04EE541`, SAK=0x20, ATS получен.
+- **Чип**: ATR PBOC3 (`3B 67 00 00 86 88 "PBOC3"`); SELECT 1PAY/2PAY → SW=6A82 (на тестовой карте нет этих файлов), GET CHALLENGE → SW=6D00.
+- **PSAM**: слоты 1/2 пустые (IccOpen rc=-2102) — подтверждено.
+- **Крипто**: DES-эталон `DES(0,key=0)=8CA64DE9C1B123A7` совпал; `PciGetRnd` работает; KCV-слоты пустые.
+- **EntryPoint**: rc=1 (ICC) — верно детектирует карту в чип-слоте.
+- **SYS**: версия прошивки `04 04 08 01 06 09 02 00`, SN, ChipID, RTC, beep, LED1-3 — ОК; LED4 отсутствует (rc=-1).
+- **Принтер**: вся цепочка init→setGray→setFont→Str — OK, но `PrnStart` → **rc=-3 = "low voltage"** (расшифровка из самого PassSDKDemo). Батарея 100%/8402mV, MCU power node включён — вероятно просадка питания печатающей головки на этом экземпляре. Код верен (1-в-1 с PassSDKDemo).
+- **1D-сканер**: `libPosApi.Lib_ScanOpen` → rc=-1002 (вендорский API не работает); использовать binder `scannerservice` (IScannerService, Honeywell libscanner1d_jni.so) — модуль физически присутствует.
+
+**Статус модулей обновлён** в сводной таблице (принтер и сканер — частично/через binder).
