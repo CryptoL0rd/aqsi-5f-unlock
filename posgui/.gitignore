@@ -1,0 +1,13 @@
+out/
+out_dex.jar
+final_dex.jar
+vpos_classes.dex
+res_compiled/
+gen/
+gen_sources.txt
+native/
+posgui_base.apk
+posgui_unsigned.apk
+classes.dex
+screenshot*.png
+*.keystore
