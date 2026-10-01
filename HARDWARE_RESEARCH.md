@@ -14,7 +14,7 @@
 |---|--------|--------|----------------|--------|
 | 1 | Чековый термопринтер (MAXQ3255) | ✅ работает | `/dev/ttyMT1` UART 921600, сервис `MaxMcuservice` | Прошивка `MAXQ3255X_App.bin`, шрифты с кириллицей |
 | 2 | 1D-сканер штрих-кодов (Honeywell) | ✅ работает | binder `scannerservice` (`IScannerService`) | JNI `libscanner1d_jni.so`, драйвер `com.hsm.barcode` |
-| 3 | Кардридер: чип + магнитная полоса + NFC | ✅ работает (через UPOS) | `com.android.vlfirmware.mpos` (EMV-стек) | Типы: ICC / MSR / NFC; PIN-пад, крипто |
+| 3 | Кардридер: чип + магнитная полоса + NFC | ✅ работает (подтверждено) | `libPosApi.so` (Ciontek CS10-PCD) → vpos.apipackage | SN `1002568497007021`, NFC читает UID/ATQ, ICC/MSR ждут карту |
 | 4 | Камера (QR/2D-сканер) | ✅ работает | `media.camera` (`ICameraService`) | Binary Eye установлен |
 | 5 | USB-хост | ✅ работает | `usb` сервис | ttyGS0-7 (gadget), mtp_usb |
 | 6 | Serial (MTK UART) | ✅ работает | ttyMT0-3 | ttyMT1 занят принтером |
@@ -243,3 +243,56 @@ scanner_smali/         - ScannerService, ScannerNative, IScannerService (smali)
 - Обнаружен и изучен кардридер: EMV-стек com.android.vlfirmware.mpos (ICC/MSR/NFC), UPOS-клиент Сбера.
 - Подтверждено: отпечатки пальцев и PSAM отсутствуют физически; BCR не активен.
 - Датчики: работают thermal/thermald/fuelgauged; акселерометры не запущены.
+
+### 2026-10-01 (вечер) — кардридер Ciontek и мини-тест
+
+**Ключевое открытие: кардридер — Ciontek CS10-PCD, нативная библиотека `libPosApi.so`**
+
+- В UPOS-клиенте и OTK есть нативная библиотека `libPosApi.so` (строка `0|OPEN|120978|CS10-PCD|ciontek-lib|1.2.0`).
+- JNI-классы библиотеки: `vpos.apipackage.{Sys,Icc,Mcr,Picc,Print,Scan}` (имена экспортов `Java_vpos_apipackage_*_Lib_1*`).
+- Порты: `/dev/ttyMT1`, `/dev/ttyMT3`, `/dev/ttyMT%d`, `/dev/ttySex1` — кардридер на одном из MTK UART.
+
+**Мини-тестовая программа (dalvikvm, без установки APK)**
+- Классы скомпилированы в dex-jar, запускаются прямо через `dalvikvm64` на устройстве (обход подписи APK).
+- Запуск: `LD_LIBRARY_PATH=/data/app/ru.aqsi.otk-1/lib/arm64 dalvikvm64 -cp hwtest_dex.jar com.hwtest.HwTest`
+
+**Результаты первого прогона (без карты):**
+```
+AppInit rc=1283760128 (нестандартный код, но не краш)
+SetEntryModeOpen rc=0
+IccCheck rc=-2405   (чип-слот: карты нет)
+IccOpen  rc=-2500
+McrCheck rc=1, McrOpen rc=0, McrRead rc=0  (MSR открыт, ждёт карту)
+PiccOpen rc=0, PiccCheck rc=-513  (NFC открыт, карты нет)
+GetVersion rc=0: 04 04 08 01 05 08 02 00 (версия прошивки кардридера)
+ReadSN    rc=0: ASCII "1002568497007021" (серийный номер кардридера!)
+Beep rc=0    (бипер сработал)
+SetLed rc=0  (LED работает)
+```
+
+**Реальное чтение NFC-карты (карта поднесена):**
+```
+PiccOpen  rc=0
+PiccCheck rc=0  UID=41 43 00 00 ...  ATQ=D2 FE AC E4
+```
+- **NFC-ридер работает и читает карты!** UID и ATQ получены.
+- UID `41 43 00 00` похож на тестовую MIFARE-карту (4-байтный UID), не EMV.
+- SELECT 2PAY через PiccCommand не ответил — карта не EMV (ожидаемо для MIFARE-теста).
+- Для чипа (ICC) и магнитной полосы (MSR) нужна физическая вставка/проведение карты — слоты работают (коды ошибок корректные: "нет карты").
+
+**Команды мини-теста (vpos.apipackage):**
+```
+Sys:  Lib_AppInit, Lib_AppExit, Lib_Beep, Lib_SetComPath, Lib_SetEntryModeOpen/Close,
+      Lib_GetVersion, Lib_ReadSN, Lib_SetLed, Lib_LedCtrl, Lib_GetTime, Lib_Test
+Icc:  Lib_IccCheck, Lib_IccOpen, Lib_IccCommand, Lib_IccApduCmd, Lib_IccClose
+Mcr:  Lib_McrCheck, Lib_McrOpen, Lib_McrRead, Lib_McrClose, Lib_McrReset
+Picc: Lib_EntryPoint, Lib_PiccOpen, Lib_PiccCheck, Lib_PiccCommand, Lib_PiccApduCmd,
+      Lib_PiccClose, Lib_PiccHalt, Lib_PiccReset, Lib_PiccRemove, Lib_PiccPolling, Lib_PiccNfc
+Print: Lib_PrnInit, Lib_PrnCheckStatus, Lib_PrnStr, Lib_PrnFeedPaper, ... (MAXQ3255)
+Scan:  Lib_ScanOpen, Lib_ScanRead, Lib_ScanClose
+```
+
+**Инструменты:**
+- Конвертация class→dex: `d8.bat --output=out.jar classes/...`
+- Запуск на устройстве: `dalvikvm64 -cp app.jar com.hwtest.HwTest`
+- Исходники: `/c/Users/admin/ZCodeProject/hwtest/`
