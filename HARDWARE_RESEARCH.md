@@ -14,7 +14,7 @@
 |---|--------|--------|----------------|--------|
 | 1 | Чековый термопринтер (MAXQ3255) | ✅ работает | `/dev/ttyMT1` UART 921600, сервис `MaxMcuservice` | Прошивка `MAXQ3255X_App.bin`, шрифты с кириллицей |
 | 2 | 1D-сканер штрих-кодов (Honeywell) | ✅ работает | binder `scannerservice` (`IScannerService`) | JNI `libscanner1d_jni.so`, драйвер `com.hsm.barcode` |
-| 3 | Кардридер: чип + магнитная полоса + NFC | ✅ работает (подтверждено) | `libPosApi.so` (Ciontek CS10-PCD) → vpos.apipackage | SN `1002568497007021`, NFC читает UID/ATQ, ICC/MSR ждут карту |
+| 3 | Кардридер: чип + магнитная полоса + NFC | ✅ работает (все 3 интерфейса подтверждены чтением карт) | `libPosApi.so` (Ciontek CS10-PCD) → vpos.apipackage | SN `1002568497007021`; NFC: UID/ATQ; ICC: ATR; MSR: треки 1/2 |
 | 4 | Камера (QR/2D-сканер) | ✅ работает | `media.camera` (`ICameraService`) | Binary Eye установлен |
 | 5 | USB-хост | ✅ работает | `usb` сервис | ttyGS0-7 (gadget), mtp_usb |
 | 6 | Serial (MTK UART) | ✅ работает | ttyMT0-3 | ttyMT1 занят принтером |
@@ -270,7 +270,18 @@ Beep rc=0    (бипер сработал)
 SetLed rc=0  (LED работает)
 ```
 
-**Реальное чтение NFC-карты (карта поднесена):**
+**Реальное чтение карт (карта вставлена в чип-слот):**
+```
+IccCheck rc=0      (карта обнаружена)
+IccOpen(slot=1) rc=0  ATR=3B 6E 00 00 80 31 80 66 B0 84 0C 01 6E 01 83 00 90
+```
+- **Чип-ридер работает!** ATR получен: TS=3B (прямая конвенция), T0=6E, 14 исторических байт
+  `80 31 80 66 B0 84 0C 01 6E 01 83 00 90` — стандартный ATR банковской карты.
+- IccCheck rc=0 = карта в слоте; IccOpen(slot=1) rc=0 = чип активирован (важно: слот = 1, не 0).
+- SELECT 1PAY/GPO не ответили — вероятно, тестовая карта требует PIN или имеет ограниченный доступ,
+  но обмен с чипом установлен (ATR = карта ответила на активацию).
+
+**NFC-карта (карта поднесена):**
 ```
 PiccOpen  rc=0
 PiccCheck rc=0  UID=41 43 00 00 ...  ATQ=D2 FE AC E4
@@ -296,3 +307,35 @@ Scan:  Lib_ScanOpen, Lib_ScanRead, Lib_ScanClose
 - Конвертация class→dex: `d8.bat --output=out.jar classes/...`
 - Запуск на устройстве: `dalvikvm64 -cp app.jar com.hwtest.HwTest`
 - Исходники: `/c/Users/admin/ZCodeProject/hwtest/`
+
+### 2026-10-01 (ночь) — MSR прочитан, разбор PassSDKDemo
+
+**Найден рабочий референс от вендора: `test.apidemo.activity` (PassSDKDemo)**
+- APK: `/data/app/test.apidemo.activity-1/base.apk` (32-бит, primaryCpuAbi=armeabi-v7a).
+- Его `libPosApi.so` лежит в `/data/app/test.apidemo.activity-1/lib/arm/` (только 32-бит!).
+- Поэтому самописные тесты надо запускать через **`dalvikvm32`** с `LD_LIBRARY_PATH=/data/app/test.apidemo.activity-1/lib/arm:/system/lib` — через dalvikvm64 получаем UnsatisfiedLinkError.
+- Декомпилирован jadx'ом в `passsdk_src/`. MSR-логика — `test.apidemo.activity.McrActivity`.
+
+**Правильный алгоритм чтения MSR (из McrActivity):**
+```
+McrOpen();                                   // rc=0
+loop:
+    McrOpen();                               // повторный open каждый цикл
+    while (McrCheck() != 0) sleep(200);      // McrCheck: 1 = нет карты, 0 = карта проведена!
+    McrRead((byte)0, (byte)0, t1, t2, t3);   // буферы по 250 байт
+    ret битовая маска: bit0=track1, bit1=track2, bit2=track3; ret>7 = ошибка данных
+McrClose();
+```
+Важно: **McrCheck возвращает 1 в холостую и 0 в момент свайпа** (инверсная семантика относительно ожиданий). Читать надо только когда McrCheck==0.
+
+**Успешное чтение магнитной полосы (обе карты, треки 1+2):**
+```
+PassSDKDemo:  ret=3  TRACK1: B2202201754786297^STOYANOV/IVAN^230920119850685
+                     TRACK2: 2202201754786297=230920119850685
+MsrTest v3:   ret=3  TRACK1: B4276380105400142^STOYANOV/IVAN^220820112830...
+                     TRACK2: 4276380105400142=22082011283070400000
+```
+- **MSR полностью работает.** Ранние неудачи были не в коде, а в физике: старая карта не давала McrCheck==0 (не регистрировалась головкой).
+- Вторая карта (PBOC3) по чипу: `ATR=3B 67 00 00 86 88 50 42 4F 43 33` (ASCII "PBOC3" в исторических байтах).
+
+**Проверка логов PassSDKDemo вживую** (logcat tag `liuhao`): подтвердил те же вызовы и значения, что в декомпиляте.
