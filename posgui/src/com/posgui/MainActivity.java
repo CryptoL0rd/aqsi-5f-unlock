@@ -331,22 +331,36 @@ public class MainActivity extends Activity {
     }
 
     private void testEmvDetect() {
-        log("\n=== EMV detect (20s) ===");
+        log("\n=== EMV detect ===");
         int r = call0("EntryPoint_Open");
         log("EntryPoint_Open rc=" + r);
-        log("Present card to any reader...");
+        log("Present card to any reader (blocking wait, up to ~30s)...");
+        log("NOTE: EntryPoint only detects EMV payment cards (MIR/UnionPay/Paypass/payWave).");
+        log("      Non-payment NFC cards are NOT detected - use 'NFC / PICC' button for them.");
 
-        long deadline = System.currentTimeMillis() + 20000;
-        int cardType = -1;
-        while (System.currentTimeMillis() < deadline) {
-            cardType = call0("EntryPoint_Detect");
-            if (cardType >= 0 && cardType != 8) break;   // real card detected
-            if (cardType == 8) { sleep(300); continue; }  // no card yet
-            sleep(300);
-        }
+        // EntryPoint_Detect is a BLOCKING call with its own internal timeout.
+        // Do NOT call it in a tight loop - one call waits for the card itself.
+        int cardType = call0("EntryPoint_Detect");
         call0("EntryPoint_Close");
 
         log("EntryPoint_Detect rc=" + cardType + " -> " + decodeCardType(cardType));
+
+        // If EntryPoint says "no card", double-check whether a card is physically present
+        // (EntryPoint only sees EMV payment cards; PiccCheck sees any ISO14443-A card).
+        if (cardType == 8) {
+            int po = call0("PiccOpen");
+            if (po == 0) {
+                byte[] cardTypeB = new byte[3];
+                byte[] serialNo = new byte[50];
+                int pc = call("PiccCheck", new Class<?>[]{byte.class, byte[].class, byte[].class},
+                        (byte) 'A', cardTypeB, serialNo);
+                call0("PiccClose");
+                if (pc == 0) {
+                    log(">> Card IS present (SN=" + hex(serialNo, findNull(serialNo)) +
+                        ") but NOT an EMV payment card -> EntryPoint ignores it.");
+                }
+            }
+        }
     }
 
     private String decodeCardType(int t) {
@@ -355,9 +369,9 @@ public class MainActivity extends Activity {
             case 1: return "ICC (contact chip)";
             case 2: return "NFC contactless (Paypass/MC)";
             case 3: return "NFC contactless (payWave/UnionPay)";
-            case 8: return "no card";
+            case 8: return "no card (still searching)";
             case -1: return "timeout / cancelled";
-            default: return "unknown";
+            default: return "unknown rc=" + t;
         }
     }
 

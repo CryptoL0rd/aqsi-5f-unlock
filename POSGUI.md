@@ -24,7 +24,7 @@
 | **Print sample** | тестовый чек | `PrintInit/SetGray/SetFont/Str/Start/Close` |
 | **Scan 1D barcode (10s)** | 1D-сканер, ждёт штрих-код 10с | `Scan.Lib_ScanOpen/Read/Close` |
 | **PCI crypto** | rnd + DES-эталон + KCV | `PciGetRnd`, `Des`, `PciReadKcv` |
-| **EMV entry point detect** | авто-определение карты, ждёт 20с: 0=MSR / 1=ICC / 2=Paypass / 3=payWave / 8=нет карты | `EntryPoint_Open/Detect/Close` |
+| **EMV entry point detect** | авто-определение EMV-карты (блокирующий ~30с): 0=MSR / 1=ICC / 2=Paypass / 3=payWave / 8=нет карты. **Важно:** детектирует только платёжные EMV-карты (МИР/UnionPay/Paypass/payWave), не любые NFC. Если карта не EMV — покажет `8`, а ниже диагностика `Card IS present ... but NOT an EMV payment card` | `EntryPoint_Open/Detect/Close` + `PiccCheck` для диагностики |
 | **ALL** | все неинтерактивные тесты подряд | — |
 
 Каждый тест пишет результат в лог (rc-коды + данные). Кнопка **Clear log** очищает.
